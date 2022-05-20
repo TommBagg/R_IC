@@ -10,7 +10,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 The release performs the Index of Connectivity (IC) starting from the version developed by Cavalli et al. (2013). We implemented IC in the R programming language to make it more accessible and versatile for final users. Furthermore, beyond the traditional implementation of computing IC, we developed two algorithms to compute IC recursively (batch process) and a more flexible version, allowing user-defined weighting factor and the possibility to perform an analysis of the outputs along a given longitudinal profile.
 
-Dependencies
+###Dependencies
 In order to run the three scripts provided in the release, TauDEM has to be installed in order to successively call the executables. You can download and install the latest version of the complete windows installer from https://hydrology.usu.edu/taudem/taudem5/downloads.html To develop the three scripts, version number 5.3.7 was used, however, R_IC is expected to work also with earlier versions.
 Since the script is written in R language, R software is required https://cran.r-project.org/bin/windows/base/ The adopted version is the 4.0.3. To compute operations, we further used built-in functions from different R packages (before installing and loading them remember to install Rtools 4 from https://cran.r-project.org/bin/windows/Rtools/rtools40.html). The necessary packages are raster (v 3.4.5), shapefiles (v 0.7), rgdal (v 1.5.19), cowplot (v 1.1.1) and ggplot2 (v 3.3.2). The reported versions are those used to develop the three scripts. However, we expect that earlier or updated versions of R and packages will be suitable as well.
 
