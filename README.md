@@ -1,4 +1,4 @@
-R_IC user guide
+# R_IC user guide
 
 Implementation of the Index of Connectivity in R language
 
