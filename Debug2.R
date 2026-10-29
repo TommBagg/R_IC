@@ -1,3 +1,5 @@
+#### South Asia Albers Equal Area Conic (ESRI:102028)
+
 # ==============================================================================
 # SCRIPT 1: STANDALONE DEBUG SCRIPT (INDIA ALBERS EQUAL-AREA PROJECTION)
 # ==============================================================================

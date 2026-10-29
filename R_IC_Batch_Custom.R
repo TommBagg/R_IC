@@ -1,3 +1,5 @@
+#### # WGS 84 / UTM Zone 44N
+
 # Title: Batch R_IC v. 3.3 (Dual-Method Selector: True Outlet vs Gauge Station + Corrected 8-Dir Traversal)
 # Author details: Tommaso Baggio, Lorenzo Martini, Loris Torresani
 # Production batch script for 220 CAMELS-IND catchments
