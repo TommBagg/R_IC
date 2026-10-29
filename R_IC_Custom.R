@@ -1,29 +1,5 @@
-# It incorporates the exact methodology and critical fixes from the batch pipeline:
-#   Replaces rgdal with terra: Uses modern spatial drivers and handles the PROJ conflict environment setup.
-# Automated Reprojection to Metric Grid (target_crs at 100 m): Reprojects the DEM, NDVI, and targets into a projected coordinate system (default: UTM Zone 44N EPSG:32644).
-# Upstream Pit-Filling (PitRemove): Automatically resolves all artificial depressions created during resampling before flow direction calculations, ensuring the stream network connects continuously to the outlet.
-# Flow Accumulation & Stream Snapping: Runs AreaD8 and snaps the gauge/target point to the cell with the highest flow accumulation within a 
-# 500
-# m
-# 500 m
-# buffer, preventing the while-loop from terminating early on the riverbank.
-# Cai et al. (2000) 
-# C
-# C
-# -factor: Converts NDVI to vegetation cover percentage and clamps weights between 
-# 0.001
-# 0.001
-# and 
-# 1.0
-# 1.0
-# (avoiding negative values and division by zero).
-# Modernized Longitudinal Profile Analysis: Updated without any rgdal dependencies (readOGR/writeOGR replaced by terra), compatible with flag_profile <- 1 or 0.
-
-
-
-# Title: Custom R_IC v. 2.0 (Single Site: In-Code Reprojection, PitRemove, Snapping, & C-factor)
-# Original Authors: Tommaso Baggio, Lorenzo Martini, Loris Torresani
-# Updated for: terra integration, TauDEM PitRemove, stream-snapping, and Cai et al. C-factor
+# Title: Custom R_IC v. 2.2 (Single Site: Dual Outlet Method, PitRemove, & Boundary Fix)
+# Author details: Tommaso Baggio, Lorenzo Martini, Loris Torresani
 
 # 1. Resolve TauDEM PROJ environment conflict
 if (dir.exists(system.file("proj", package = "terra"))) {
@@ -38,7 +14,6 @@ library(raster)
 library(ggplot2)
 library(cowplot)
 
-# Allow tolerance for raster alignment checks
 rasterOptions(tolerance = 0.05)
 
 # Premise: all files will be overwritten if they already exist
@@ -47,45 +22,41 @@ rasterOptions(tolerance = 0.05)
 # INPUTS & DIRECTORIES SETUP
 ###################################
 
-# Set working / output directory (do not write "/" as last character)
+# Set working / output directory
 wd <- "F:/Peninsular India/Connectivity/IC/Single_Output"
 if (!dir.exists(wd)) dir.create(wd, recursive = TRUE)
 setwd(wd)
 
 # Input file paths
-dem_path    <- "F:/Peninsular India/Connectivity/IC/Input/DEM/DEM_03002.tif"
-ndvi_path   <- "F:/Peninsular India/Connectivity/IC/Input/NDVI/2021/NDVI_03002.tif"
+dem_path    <- "F:/Peninsular India/Connectivity/IC/Input/DEM/DEM_04039.tif"
+ndvi_path   <- "F:/Peninsular India/Connectivity/IC/Input/NDVI/2021/NDVI_04039.tif"
 target_path <- "F:/Peninsular India/CAMELS_IND/CAMELS_IND_Catchments_Streamflow_Sufficient3/shapefiles_catchment/gauge_stations.shp"
 
-# Target Gauge ID (if using a multi-gauge shapefile; leave NA if shapefile contains only 1 feature)
-gauge_id     <- "03002"
+# Target Gauge ID
+gauge_id     <- "04039"
 gauge_id_col <- "gauge_id"
 
 # Coordinate System & Target Resolution
 target_crs   <- "EPSG:32644" # WGS 84 / UTM Zone 44N
 target_res   <- 100          # 100 meters
 
-# Stream Snapping Radius (meters)
-snap_radius  <- 500          # Search radius to snap gauge onto the main D8 stream
+# -------------------------------------------------------------------------
+# OUTLET METHOD SELECTOR:
+# "catchment_outlet" = Automatically finds the true river outlet (max accumulation)
+# "gauge_snapping"   = Uses the gauge station shapefile point snapped within snap_radius
+# -------------------------------------------------------------------------
+outlet_method <- "catchment_outlet"
+snap_radius   <- 2500 # Used only if outlet_method == "gauge_snapping"
 
 # Output cleanup flag: 0 = keep essential files (IC, Dup, Ddn); 1 = keep all intermediate files
 flag_k <- 0
-
-# Number of MPI cores for TauDEM
 mpi_cores <- 4
 
-###################################
 # Optional: Longitudinal Analysis of IC (Torresani & Piton, 2021)
-# 0 = do NOT run; 1 = RUN
 flag_profile <- 0
-
-# Input longitudinal profile points shapefile (only used if flag_profile == 1)
 profile_path <- file.path(wd, "input_points.shp")
-
-# Elevation thresholds to split longitudinal domains (descending order, or NA)
 input_thresh <- c(1041)
 
-# Automatically keep all intermediate files if longitudinal analysis is requested
 if (flag_profile == 1) flag_k <- 1
 
 
@@ -101,17 +72,15 @@ cat("1. Loading and reprojecting DEM & NDVI...\n")
 dem_raw  <- terra::rast(dem_path)
 ndvi_raw <- terra::rast(ndvi_path)
 
-# Reproject DEM to target CRS at specified resolution
 dem_proj_t <- terra::project(dem_raw, target_crs, res = target_res, method = "bilinear")
 writeRaster(raster(dem_proj_t), "dem_raw_proj.tif", overwrite = TRUE)
 
 # --------------------------------------------------------------------------
-# 2. Pit-Filling (TauDEM PitRemove)
+# 2. Pit-Filling Upfront (TauDEM PitRemove)
 # --------------------------------------------------------------------------
 cat("2. Running TauDEM PitRemove to resolve all surface depressions...\n")
 system(paste("mpiexec -n", mpi_cores, "PitRemove -z dem_raw_proj.tif -fel dem_pitfilled.tif"))
 
-# Load the depressionless DEM as master grid
 z_fill <- raster("dem_pitfilled.tif")
 res    <- res(z_fill)[1]
 
@@ -119,7 +88,6 @@ res    <- res(z_fill)[1]
 # 3. NDVI Reprojection & C-Factor Weighting (Cai et al., 2000)
 # --------------------------------------------------------------------------
 cat("3. Computing C-factor from NDVI...\n")
-# Align NDVI directly to the pit-filled DEM template
 wf_proj_t <- terra::project(ndvi_raw, terra::rast("dem_pitfilled.tif"), method = "bilinear")
 W_factor  <- raster(wf_proj_t)
 
@@ -130,14 +98,12 @@ if (length(vals_clean) == 0) stop("Error: NDVI raster is empty (all NA) after re
 ndvi_min <- min(vals_clean)
 ndvi_max <- max(vals_clean)
 
-# Fractional vegetation cover in percent (0 to 100%)
 if (ndvi_max == ndvi_min) {
   f_g <- W_factor * 0
 } else {
   f_g <- ((W_factor - ndvi_min) / (ndvi_max - ndvi_min)) * 100
 }
 
-# Piecewise C-factor formulation
 f_clamped <- clamp(f_g, lower = 0.095, upper = 78.3)
 C_factor  <- 0.6508 - (0.3436 * log10(f_clamped))
 
@@ -150,59 +116,63 @@ W_factor <- C_factor
 writeRaster(W_factor, "W_factor.tif", overwrite = TRUE)
 
 # --------------------------------------------------------------------------
-# 4. TauDEM D8 Flow Directions & Stream Snapping
+# 4. TauDEM D8 Flow Directions & Outlet Selection
 # --------------------------------------------------------------------------
-cat("4. Computing D8 Flow Directions and Stream Snapping...\n")
+cat("4. Computing D8 Flow Directions & Setting Target...\n")
 system(paste("mpiexec -n", mpi_cores, "D8Flowdir -p D8_flow_dir.tif -sd8 slope_D8.tif -fel dem_pitfilled.tif"))
 flow_dir_D8 <- raster("D8_flow_dir.tif")
 slope_D8    <- raster("slope_D8.tif")
 
-# Calculate flow accumulation for stream channel identification
+# Calculate flow accumulation
 system(paste("mpiexec -n", mpi_cores, "AreaD8 -p D8_flow_dir.tif -ad8 accD8.tif -nc"))
+accD8 <- raster("accD8.tif")
 
-# Load target shapefile
-targets_all <- terra::vect(target_path)
-if (is.na(terra::crs(targets_all)) || terra::crs(targets_all) == "") {
-  terra::crs(targets_all) <- "EPSG:4326"
-}
-
-# Filter by gauge ID if provided, otherwise take the first feature
-if (!is.na(gauge_id) && gauge_id_col %in% names(targets_all)) {
-  shp_ids <- trimws(as.character(targets_all[[gauge_id_col]][[1]]))
+if (outlet_method == "catchment_outlet") {
+  # METHOD A: True catchment outlet via maximum D8 accumulation
+  cat("  Using Method: Catchment Outlet (Max Flow Accumulation)...\n")
+  max_cell   <- which.max(getValues(accD8))
+  snapped_xy <- xyFromCell(accD8, max_cell)
+  max_accum  <- max(getValues(accD8), na.rm = TRUE)
+  
+  cat(sprintf("  Outlet located at X=%.1f, Y=%.1f (Total Drainage: %d cells)\n", 
+              snapped_xy[1], snapped_xy[2], as.integer(max_accum)))
+  
+} else if (outlet_method == "gauge_snapping") {
+  # METHOD B: Gauge station shapefile with buffer snapping
+  cat(sprintf("  Using Method: Gauge Station Snapping (Radius: %dm)...\n", snap_radius))
+  all_targets <- terra::vect(target_path)
+  if (is.na(terra::crs(all_targets)) || terra::crs(all_targets) == "") terra::crs(all_targets) <- "EPSG:4326"
+  
+  shp_ids <- trimws(as.character(all_targets[[gauge_id_col]][[1]]))
   is_match <- (shp_ids == gauge_id) | (sprintf("%05d", suppressWarnings(as.numeric(shp_ids))) == gauge_id)
-  target_feat <- targets_all[which(is_match)[1], ]
-} else {
-  target_feat <- targets_all[1, ]
+  target_feat <- all_targets[which(is_match)[1], ]
+  target_feat <- terra::project(target_feat, target_crs)
+  
+  buf        <- terra::buffer(target_feat, snap_radius)
+  accD8_t    <- terra::rast("accD8.tif")
+  accD8_crop <- terra::crop(accD8_t, buf)
+  accD8_mask <- terra::mask(accD8_crop, buf)
+  
+  acc_vals <- terra::values(accD8_mask)
+  max_idx  <- which.max(acc_vals)
+  
+  if (length(max_idx) == 0 || is.na(max_idx)) {
+    warning("No accumulation found within buffer; using original coordinates.")
+    snapped_xy <- terra::geom(target_feat)[, c("x", "y")]
+    max_accum  <- 0
+  } else {
+    snapped_xy <- terra::xyFromCell(accD8_mask, max_idx)
+    max_accum  <- acc_vals[max_idx]
+  }
+  
+  cat(sprintf("  Gauge %s snapped to X=%.1f, Y=%.1f (Drainage: %d cells)\n", 
+              gauge_id, snapped_xy[1], snapped_xy[2], as.integer(max_accum)))
+  
+  rm(accD8_t, accD8_crop, accD8_mask); gc()
 }
 
-target_feat <- terra::project(target_feat, target_crs)
-
-# Snap target to cell with maximum flow accumulation within buffer
-buf        <- terra::buffer(target_feat, snap_radius)
-accD8_t    <- terra::rast("accD8.tif")
-accD8_crop <- terra::crop(accD8_t, buf)
-accD8_mask <- terra::mask(accD8_crop, buf)
-
-acc_vals <- terra::values(accD8_mask)
-max_idx  <- which.max(acc_vals)
-
-if (length(max_idx) == 0 || is.na(max_idx)) {
-  warning("No accumulation found within buffer; using original coordinates.")
-  snapped_xy <- terra::geom(target_feat)[, c("x", "y")]
-  max_acc <- 0
-} else {
-  snapped_xy <- terra::xyFromCell(accD8_mask, max_idx)
-  max_acc    <- acc_vals[max_idx]
-}
-
-cat(sprintf("  Target snapped to X=%.1f, Y=%.1f (Max Accumulation: %.0f cells)\n", 
-            snapped_xy[1, 1], snapped_xy[1, 2], max_acc))
-
-# Release terra pointer to avoid file-locking
-rm(accD8_t, accD8_crop, accD8_mask); gc()
-
-# Create snapped SpatVector & rasterize
-target_snapped <- terra::vect(snapped_xy, crs = target_crs)
+# Create target point SpatVector & rasterize
+target_snapped      <- terra::vect(matrix(snapped_xy, ncol = 2), crs = target_crs)
 target_snapped$burn <- 1
 
 target_rst_t <- terra::rasterize(target_snapped, terra::rast(z_fill), field = "burn", background = 2)
@@ -212,7 +182,7 @@ target_rst   <- reclassify(target_rst, c(0.9, 1.1, NA, 1.9, 2.1, 1))
 # --------------------------------------------------------------------------
 # 5. Downslope Component (Ddn) Upstream Traversal
 # --------------------------------------------------------------------------
-cat("5. Tracing Downslope Flow Length...\n")
+cat("5. Tracing Downslope Flow Length from Outlet...\n")
 flow_dir_D8[is.na(flow_dir_D8)] <- -9999
 flow_dir_D8 <- flow_dir_D8 * target_rst
 
@@ -222,27 +192,32 @@ writeRaster(slope_D8_r_m, "slope_D8_rec_m.tif", overwrite = TRUE)
 inv_CS <- 1 / (W_factor * slope_D8_r_m)
 writeRaster(inv_CS, "inv_CS.tif", overwrite = TRUE)
 
-dir8_m <- as.matrix(flow_dir_D8)
-W_FL_m <- as.matrix(inv_CS)
+# FIX: Find target index BEFORE adding the padded border
+dir8_raw_m <- as.matrix(flow_dir_D8)
+target_idx <- which(is.na(dir8_raw_m), arr.ind = TRUE)
 
-# Boundary NA padding
-coladd <- vector(mode = "numeric", length = nrow(dir8_m)); coladd[1:length(coladd)] <- NA
-dir8_m <- cbind(coladd, dir8_m, coladd); W_FL_m <- cbind(coladd, W_FL_m, coladd)
+coladd <- vector(mode = "numeric", length = nrow(dir8_raw_m)); coladd[1:length(coladd)] <- NA
+dir8_m <- cbind(coladd, dir8_raw_m, coladd)
+W_FL_m <- cbind(coladd, as.matrix(inv_CS), coladd)
+
 rowadd <- vector(mode = "numeric", length = ncol(dir8_m)); rowadd[1:length(rowadd)] <- NA
-dir8_m <- rbind(rowadd, dir8_m, rowadd); W_FL_m <- rbind(rowadd, W_FL_m, rowadd)
+dir8_m <- rbind(rowadd, dir8_m, rowadd)
+W_FL_m <- rbind(rowadd, W_FL_m, rowadd)
 
-Wgt_m   <- W_FL_m 
-NA_data <- which(is.na(dir8_m), arr.ind = TRUE); NA_data <- as.data.frame(NA_data)
-posrow  <- NA_data$row; poscol <- NA_data$col
+Wgt_m <- W_FL_m 
+
+# Sinks to trace from: ONLY the true target cell, NOT the outer boundary padding!
+posrow <- target_idx[, "row"] + 1
+poscol <- target_idx[, "col"] + 1
 
 pos1col_NA <- poscol - 1; pos1row_NA <- posrow
-pos1row <- pos1row_NA[-pos1col_NA != 0]; pos1col <- pos1col_NA[-pos1col_NA != 0]
+pos1row <- pos1row_NA[pos1col_NA != 0]; pos1col <- pos1col_NA[pos1col_NA != 0]
 pos1dir <- dir8_m[cbind(pos1row, pos1col)]
 pos1row_0 <- pos1row[which(pos1dir == 1)]; pos1col_0 <- pos1col[which(pos1dir == 1)]
 W_FL_m[cbind(pos1row_0, pos1col_0)] <- 0
 
 pos2col_NA <- poscol - 1; pos2row_NA <- posrow + 1
-pos2rowt <- pos2row_NA[-pos2col_NA != 0]; pos2colt <- pos2col_NA[-pos2col_NA != 0]
+pos2rowt <- pos2row_NA[pos2col_NA != 0]; pos2colt <- pos2col_NA[pos2col_NA != 0]
 pos2row <- pos2rowt[pos2rowt <= (nrow(dir8_m))]; pos2col <- pos2colt[pos2rowt <= (nrow(dir8_m))]
 pos2dir <- dir8_m[cbind(pos2row, pos2col)]
 pos2row_0 <- pos2row[which(pos2dir == 2)]; pos2col_0 <- pos2col[which(pos2dir == 2)]
@@ -269,32 +244,23 @@ W_FL_m[cbind(pos5row_0, pos5col_0)] <- 0
 
 pos6col_NA <- poscol + 1; pos6row_NA <- posrow - 1
 pos6rowt <- pos6row_NA[pos6col_NA <= (ncol(dir8_m))]; pos6colt <- pos6col_NA[pos6col_NA <= (ncol(dir8_m))]
-pos6row <- pos6rowt[-pos6rowt != 0]; pos6col <- pos6colt[-pos6rowt != 0]
+pos6row <- pos6rowt[pos6rowt != 0]; pos6col <- pos6colt[pos6rowt != 0]
 pos6dir <- dir8_m[cbind(pos6row, pos6col)]
 pos6row_0 <- pos6row[which(pos6dir == 6)]; pos6col_0 <- pos6col[which(pos6dir == 6)]
 W_FL_m[cbind(pos6row_0, pos6col_0)] <- 0
 
 pos7col_NA <- poscol; pos7row_NA <- posrow - 1
-pos7row <- pos7row_NA[-pos7row_NA != 0]; pos7col <- pos7col_NA[-pos7row_NA != 0]
+pos7row <- pos7row_NA[pos7row_NA != 0]; pos7col <- pos7col_NA[pos7row_NA != 0]
 pos7dir <- dir8_m[cbind(pos7row, pos7col)]
 pos7row_0 <- pos7row[which(pos7dir == 7)]; pos7col_0 <- pos7col[which(pos7dir == 7)]
 W_FL_m[cbind(pos7row_0, pos7col_0)] <- 0 
 
 pos8col_NA <- poscol - 1; pos8row_NA <- posrow - 1
-pos8rowt <- pos8row_NA[-pos8row_NA != 0]; pos8colt <- pos8col_NA[-pos8row_NA != 0]
-pos8row <- pos8rowt[-pos8colt != 0]; pos8col <- pos8colt[-pos8colt != 0]
+pos8rowt <- pos8row_NA[pos8row_NA != 0]; pos8colt <- pos8col_NA[pos8row_NA != 0]
+pos8row <- pos8rowt[pos8rowt != 0]; pos8col <- pos8colt[pos8rowt != 0]
 pos8dir <- dir8_m[cbind(pos8row, pos8col)]
-pos8row_0 <- pos8row[which(pos8dir == 8)]; pos8col_0 <- pos8col[which(pos8dir == 8)]
+pos8row_0 <- pos8row[which(pos8dir == 8)]; pos8col_0 <- poscol[which(pos8dir == 8)]
 W_FL_m[cbind(pos8row_0, pos8col_0)] <- 0
-
-rm(pos1col, pos1col_NA, pos1row, pos1row_NA, pos1dir,
-   pos3col, pos3col_NA, pos3row, pos3row_NA, pos3dir,
-   pos5col, pos5col_NA, pos5row, pos5row_NA, pos5dir,
-   pos7col, pos7col_NA, pos7row, pos7row_NA, pos7dir,
-   pos2col, pos2col_NA, pos2row, pos2row_NA, pos2colt, pos2rowt, pos2dir,
-   pos4col, pos4col_NA, pos4row, pos4row_NA, pos4colt, pos4rowt, pos4dir,
-   pos6col, pos6col_NA, pos6row, pos6row_NA, pos6colt, pos6rowt, pos6dir,
-   pos8col, pos8col_NA, pos8row, pos8row_NA, pos8colt, pos8rowt, pos8dir)
 
 count <- 1
 while ((length(pos1col_0) | length(pos2col_0) | length(pos3col_0) | length(pos4col_0) | 
@@ -329,12 +295,12 @@ while ((length(pos1col_0) | length(pos2col_0) | length(pos3col_0) | length(pos4c
   pos0col_bis <- c(pos1col_0, pos2col_0, pos3col_0, pos4col_0, pos5col_0, pos6col_0, pos7col_0, pos8col_0)
   
   poscolt <- pos0col_bis - 1; posrowt <- pos0row_bis
-  posrow <- posrowt[-poscolt != 0]; poscol <- poscolt[-poscolt != 0]
+  posrow <- posrowt[poscolt != 0]; poscol <- poscolt[poscolt != 0]
   posdir <- dir8_m[cbind(posrow, poscol)]
   pos1row_0 <- posrow[which(posdir == 1)]; pos1col_0 <- poscol[which(posdir == 1)]
   
   poscolt <- pos0col_bis - 1; posrowt <- pos0row_bis + 1
-  posrow <- posrowt[-poscolt != 0]; poscol <- poscolt[-poscolt != 0]
+  posrow <- posrowt[poscolt != 0]; poscol <- poscolt[poscolt != 0]
   posdir <- dir8_m[cbind(posrow, poscol)]
   pos2row_0 <- posrow[which(posdir == 2)]; pos2col_0 <- poscol[which(posdir == 2)]
   
@@ -351,25 +317,25 @@ while ((length(pos1col_0) | length(pos2col_0) | length(pos3col_0) | length(pos4c
   pos5row_0 <- posrow[which(posdir == 5)]; pos5col_0 <- poscol[which(posdir == 5)]
   
   poscolt <- pos0col_bis + 1; posrowt <- pos0row_bis - 1
-  posrow <- posrowt[-posrowt != 0]; poscol <- poscolt[-posrowt != 0]
+  posrow <- posrowt[posrowt != 0]; poscol <- poscolt[posrowt != 0]
   posdir <- dir8_m[cbind(posrow, poscol)]
   pos6row_0 <- posrow[which(posdir == 6)]; pos6col_0 <- poscol[which(posdir == 6)]
   
   poscolt <- pos0col_bis; posrowt <- pos0row_bis - 1
-  posrow <- posrowt[-posrowt != 0]; poscol <- poscolt[-posrowt != 0]
+  posrow <- posrowt[posrowt != 0]; poscol <- poscolt[posrowt != 0]
   posdir <- dir8_m[cbind(posrow, poscol)]
   pos7row_0 <- posrow[which(posdir == 7)]; pos7col_0 <- poscol[which(posdir == 7)]
   
   poscolt <- pos0col_bis - 1; posrowt <- pos0row_bis - 1
-  posrowt1 <- posrowt[-posrowt != 0]; poscolt1 <- poscolt[-posrowt != 0]
-  posrow <- posrowt1[-poscolt1 != 0]; poscol <- poscolt1[-poscolt1 != 0]
+  posrowt1 <- posrowt[posrowt != 0]; poscolt1 <- poscolt[posrowt != 0]
+  posrow <- posrowt1[poscolt1 != 0]; poscol <- poscolt1[poscolt1 != 0]
   posdir <- dir8_m[cbind(posrow, poscol)]
   pos8row_0 <- posrow[which(posdir == 8)]; pos8col_0 <- poscol[which(posdir == 8)]
   
   count <- count + 1
 }
 
-cat(sprintf("  Flow length loop completed in %d iterations.\n", count))
+cat(sprintf("  Flow length loop finished in %d iterations!\n", count))
 
 # Remove matrix boundary padding
 W_FL_m <- W_FL_m[-1, ]; W_FL_m <- W_FL_m[-nrow(W_FL_m), ]
@@ -390,7 +356,8 @@ Ddn <- ((W_FL_fin == 0) * inv_CS) + W_FL_fin
 crs(Ddn) <- crs_out
 writeRaster(Ddn, "Ddn.tif", overwrite = TRUE)
 
-rm(Wgt_m, W_FL_m, dir8_m, dif_WFL, W_FL, dir8, inv_CS, flow_dir_D8); gc()
+# Clean memory
+rm(Wgt_m, W_FL_m, dir8_m, dif_WFL, inv_CS, flow_dir_D8); gc()
 
 # --------------------------------------------------------------------------
 # 6. Upslope Component (Dup)
@@ -407,15 +374,13 @@ accS <- raster("accS.tif")
 system(paste("mpiexec -n", mpi_cores, "AreaDinf -ang ang.tif -sca sca.tif -nc"))
 sca <- raster("sca.tif")
 
+system(paste("mpiexec -n", mpi_cores, "AreaDinf -ang ang.tif -sca accW.tif -wg W_factor.tif -nc"))
+accW <- raster("accW.tif") * res
+
 constant_res <- z_fill * 0 + res
 Acc_fin      <- sca / constant_res
 smean        <- (accS + slope_D8_r_m) / Acc_fin
-
-rm(slope_D8_r_m, accS, target_rst); gc()
-
-system(paste("mpiexec -n", mpi_cores, "AreaDinf -ang ang.tif -sca accW.tif -wg W_factor.tif -nc"))
-accW <- raster("accW.tif") * res
-cmean <- (accW + W_factor) / Acc_fin
+cmean        <- (accW + W_factor) / Acc_fin
 
 Dup <- cmean * smean * (Acc_fin * constant_res^2)^(1/2)
 crs(Dup) <- crs_out
@@ -426,18 +391,19 @@ rm(constant_res, ang, Acc_fin, smean, accW, cmean); gc()
 # --------------------------------------------------------------------------
 # 7. Final Index of Connectivity (IC)
 # --------------------------------------------------------------------------
-cat("7. Calculating Final IC...\n")
-IC <- log10(Dup / Ddn)
-IC <- IC * mask_cells
+cat("7. Calculating Final Index of Connectivity...\n")
+ratio <- Dup / Ddn
+IC    <- log10(ratio)
+IC    <- IC * mask_cells
 crs(IC) <- crs_out
 
 pal <- colorRampPalette(c("blue", "lightyellow1", "red"))
 
 png("IC.png", width = 800, height = 800)
-plot(IC, col = pal(100), main = "Index of Connectivity (IC)")
+plot(IC, col = pal(100), main = paste("Index of Connectivity (IC) - Gauge", gauge_id))
 dev.off()
 
-plot(IC, col = pal(100), main = "Index of Connectivity (IC)")
+plot(IC, col = pal(100), main = paste("Index of Connectivity (IC) - Gauge", gauge_id))
 writeRaster(IC, paste0("IC_", res, "m.tif"), overwrite = TRUE)
 
 # Cleanup intermediate files if flag_k == 0
@@ -464,7 +430,6 @@ if (flag_profile == 1) {
   pointprofile_vect <- terra::vect(profile_path)
   pointprofile_vect <- terra::project(pointprofile_vect, target_crs)
   
-  # Remove extraneous attribute columns
   if (ncol(pointprofile_vect) > 0) {
     pointprofile_vect <- pointprofile_vect[, 0]
   }
@@ -472,27 +437,23 @@ if (flag_profile == 1) {
   system(paste("mpiexec -n", mpi_cores, "AreaD8 -p D8_flow_dir.tif -ad8 accW8D.tif -nc"))
   Acc_fin <- raster("accW8D.tif")
   
-  # Stack all metric raster layers
   rasStack <- stack(W_factor, Dup, Ddn, IC, z_fill, slope_D8, Acc_fin)
   
-  # Extract components along points
   pointprofile_sp <- as(pointprofile_vect, "Spatial")
-  pointprofile$POINT_X <- pointprofile_sp@coords[, 1]
-  pointprofile$POINT_Y <- pointprofile_sp@coords[, 2]
+  pointprofile_sp$POINT_X <- pointprofile_sp@coords[, 1]
+  pointprofile_sp$POINT_Y <- pointprofile_sp@coords[, 2]
   
   pointprofile2 <- raster::extract(rasStack, pointprofile_sp, method = "simple", df = TRUE, sp = TRUE)
   names(pointprofile2) <- c("POINT_X", "POINT_Y", "W", "Dup", "Ddn", "IC", "Z", "S8", "A")
   
-  # Compute Abscissa (Distance along river channel)
   pointprofile2@data <- pointprofile2@data[order(pointprofile2@data$Z), ]
   pointprofile2@data$Absc[1] <- 0
   for (i in 2:length(pointprofile2@data$Z)) {
-    pointprofile2@data$Absc[i] <- pointprofile2@data$Absc[i-1] + 
-      ((pointprofile2@data$POINT_X[i] - pointprofile2@data$POINT_X[i-1])^2 + 
-         (pointprofile2@data$POINT_Y[i] - pointprofile2@data$POINT_Y[i-1])^2)^0.5
+    pointprofile2@data$Absc[i] <- pointprofile2@data$Absc[i - 1] + 
+      ((pointprofile2@data$POINT_X[i] - pointprofile2@data$POINT_X[i - 1])^2 + 
+         (pointprofile2@data$POINT_Y[i] - pointprofile2@data$POINT_Y[i - 1])^2)^0.5
   }
   
-  # Split profile into domains
   pointprofile2@data$Domain <- NA
   if (length(input_thresh) == 1 && !is.na(input_thresh[1])) {
     pointprofile2@data$Domain[pointprofile2@data$Z > input_thresh[1]] <- "A"
@@ -511,11 +472,9 @@ if (flag_profile == 1) {
   write.csv(DATA, file = "DATA.csv", row.names = FALSE)
   terra::writeVector(terra::vect(pointprofile2), "point_profile_IC.shp", overwrite = TRUE)
   
-  # Fit cubic polynomial
   lm_pol <- lm(DATA$IC ~ poly(DATA$Absc, 3, raw = TRUE))
   rsqr   <- round(summary(lm_pol)$adj.r.squared, 3)
   
-  # Summary Longitudinal Plots
   number_ticks <- function(n) { function(limits) pretty(limits, n) }
   
   Profile_plot <- ggplot(DATA, aes(x = Absc, y = Z, colour = Domain)) + 
