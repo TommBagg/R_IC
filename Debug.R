@@ -20,7 +20,7 @@ if (!dir.exists(debug_dir)) dir.create(debug_dir, recursive = TRUE)
 setwd(debug_dir)
 
 # File Paths & Parameters (Change gauge_id as needed)
-gauge_id    <- "03002"
+gauge_id    <- "09012"
 dem_path    <- paste0("F:/Peninsular India/Connectivity/IC/Input/DEM/DEM_", gauge_id, ".tif")
 ndvi_path   <- paste0("F:/Peninsular India/Connectivity/IC/Input/NDVI/2021/NDVI_", gauge_id, ".tif")
 target_crs  <- "EPSG:32644" # WGS 84 / UTM Zone 44N

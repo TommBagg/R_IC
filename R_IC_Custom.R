@@ -1,4 +1,4 @@
-# Title: Custom R_IC v. 2.2 (Single Site: Dual Outlet Method, PitRemove, & Boundary Fix)
+# Title: Custom R_IC v. 2.3 (Single Site: Dual Outlet Method, PitRemove, & Corrected 8-Dir Traversal)
 # Author details: Tommaso Baggio, Lorenzo Martini, Loris Torresani
 
 # 1. Resolve TauDEM PROJ environment conflict
@@ -27,13 +27,12 @@ wd <- "F:/Peninsular India/Connectivity/IC/Single_Output"
 if (!dir.exists(wd)) dir.create(wd, recursive = TRUE)
 setwd(wd)
 
-# Input file paths
-dem_path    <- "F:/Peninsular India/Connectivity/IC/Input/DEM/DEM_04039.tif"
-ndvi_path   <- "F:/Peninsular India/Connectivity/IC/Input/NDVI/2021/NDVI_04039.tif"
-target_path <- "F:/Peninsular India/CAMELS_IND/CAMELS_IND_Catchments_Streamflow_Sufficient3/shapefiles_catchment/gauge_stations.shp"
+gauge_id <- "09012"
 
-# Target Gauge ID
-gauge_id     <- "04039"
+# Input file paths
+dem_path    <- paste0("F:/Peninsular India/Connectivity/IC/Input/DEM/DEM_", gauge_id, ".tif")
+ndvi_path   <- paste0("F:/Peninsular India/Connectivity/IC/Input/NDVI/2021/NDVI_", gauge_id, ".tif")
+target_path <- "F:/Peninsular India/CAMELS_IND/CAMELS_IND_Catchments_Streamflow_Sufficient3/shapefiles_catchment/gauge_stations.shp"
 gauge_id_col <- "gauge_id"
 
 # Coordinate System & Target Resolution
@@ -123,7 +122,6 @@ system(paste("mpiexec -n", mpi_cores, "D8Flowdir -p D8_flow_dir.tif -sd8 slope_D
 flow_dir_D8 <- raster("D8_flow_dir.tif")
 slope_D8    <- raster("slope_D8.tif")
 
-# Calculate flow accumulation
 system(paste("mpiexec -n", mpi_cores, "AreaD8 -p D8_flow_dir.tif -ad8 accD8.tif -nc"))
 accD8 <- raster("accD8.tif")
 
@@ -190,9 +188,9 @@ slope_D8_r_m <- reclassify(slope_D8, c(-2, 0.005, 0.005, 1, 10^50, 1))
 writeRaster(slope_D8_r_m, "slope_D8_rec_m.tif", overwrite = TRUE)
 
 inv_CS <- 1 / (W_factor * slope_D8_r_m)
-writeRaster(inv_CS, "inv_CS.tif", overwrite = TRUE)
+writeRaster(inv_CS, paste0("inv_CS_100m_5x5_", gauge_id, ".tif"), overwrite = TRUE)
 
-# FIX: Find target index BEFORE adding the padded border
+# FIX: Find target index BEFORE adding matrix padding (prevents boundary artifact)
 dir8_raw_m <- as.matrix(flow_dir_D8)
 target_idx <- which(is.na(dir8_raw_m), arr.ind = TRUE)
 
@@ -206,61 +204,19 @@ W_FL_m <- rbind(rowadd, W_FL_m, rowadd)
 
 Wgt_m <- W_FL_m 
 
-# Sinks to trace from: ONLY the true target cell, NOT the outer boundary padding!
+# Sinks to trace from: ONLY the true target cell, NOT the outer border!
 posrow <- target_idx[, "row"] + 1
 poscol <- target_idx[, "col"] + 1
 
-pos1col_NA <- poscol - 1; pos1row_NA <- posrow
-pos1row <- pos1row_NA[pos1col_NA != 0]; pos1col <- pos1col_NA[pos1col_NA != 0]
-pos1dir <- dir8_m[cbind(pos1row, pos1col)]
-pos1row_0 <- pos1row[which(pos1dir == 1)]; pos1col_0 <- pos1col[which(pos1dir == 1)]
-W_FL_m[cbind(pos1row_0, pos1col_0)] <- 0
-
-pos2col_NA <- poscol - 1; pos2row_NA <- posrow + 1
-pos2rowt <- pos2row_NA[pos2col_NA != 0]; pos2colt <- pos2col_NA[pos2col_NA != 0]
-pos2row <- pos2rowt[pos2rowt <= (nrow(dir8_m))]; pos2col <- pos2colt[pos2rowt <= (nrow(dir8_m))]
-pos2dir <- dir8_m[cbind(pos2row, pos2col)]
-pos2row_0 <- pos2row[which(pos2dir == 2)]; pos2col_0 <- pos2col[which(pos2dir == 2)]
-W_FL_m[cbind(pos2row_0, pos2col_0)] <- 0
-
-pos3col_NA <- poscol; pos3row_NA <- posrow + 1
-pos3row <- pos3row_NA[pos3row_NA <= (nrow(dir8_m))]; pos3col <- pos3col_NA[pos3row_NA <= (nrow(dir8_m))]
-pos3dir <- dir8_m[cbind(pos3row, pos3col)]
-pos3row_0 <- pos3row[which(pos3dir == 3)]; pos3col_0 <- pos3col[which(pos3dir == 3)]
-W_FL_m[cbind(pos3row_0, pos3col_0)] <- 0
-
-pos4col_NA <- poscol + 1; pos4row_NA <- posrow + 1
-pos4rowt <- pos4row_NA[pos4col_NA <= (ncol(dir8_m))]; pos4colt <- pos4col_NA[pos4col_NA <= (ncol(dir8_m))]
-pos4row <- pos4rowt[pos4rowt <= (nrow(dir8_m))]; pos4col <- pos4colt[pos4rowt <= (nrow(dir8_m))]
-pos4dir <- dir8_m[cbind(pos4row, pos4col)]
-pos4row_0 <- pos4row[which(pos4dir == 4)]; pos4col_0 <- pos4col[which(pos4dir == 4)]
-W_FL_m[cbind(pos4row_0, pos4col_0)] <- 0
-
-pos5col_NA <- poscol + 1; pos5row_NA <- posrow
-pos5row <- pos5row_NA[pos5col_NA <= (ncol(dir8_m))]; pos5col <- pos5col_NA[pos5col_NA <= (ncol(dir8_m))]
-pos5dir <- dir8_m[cbind(pos5row, pos5col)]
-pos5row_0 <- pos5row[which(pos5dir == 5)]; pos5col_0 <- pos5col[which(pos5dir == 5)]
-W_FL_m[cbind(pos5row_0, pos5col_0)] <- 0
-
-pos6col_NA <- poscol + 1; pos6row_NA <- posrow - 1
-pos6rowt <- pos6row_NA[pos6col_NA <= (ncol(dir8_m))]; pos6colt <- pos6col_NA[pos6col_NA <= (ncol(dir8_m))]
-pos6row <- pos6rowt[pos6rowt != 0]; pos6col <- pos6colt[pos6rowt != 0]
-pos6dir <- dir8_m[cbind(pos6row, pos6col)]
-pos6row_0 <- pos6row[which(pos6dir == 6)]; pos6col_0 <- pos6col[which(pos6dir == 6)]
-W_FL_m[cbind(pos6row_0, pos6col_0)] <- 0
-
-pos7col_NA <- poscol; pos7row_NA <- posrow - 1
-pos7row <- pos7row_NA[pos7row_NA != 0]; pos7col <- pos7col_NA[pos7row_NA != 0]
-pos7dir <- dir8_m[cbind(pos7row, pos7col)]
-pos7row_0 <- pos7row[which(pos7dir == 7)]; pos7col_0 <- pos7col[which(pos7dir == 7)]
-W_FL_m[cbind(pos7row_0, pos7col_0)] <- 0 
-
-pos8col_NA <- poscol - 1; pos8row_NA <- posrow - 1
-pos8rowt <- pos8row_NA[pos8row_NA != 0]; pos8colt <- pos8col_NA[pos8row_NA != 0]
-pos8row <- pos8rowt[pos8rowt != 0]; pos8col <- pos8colt[pos8rowt != 0]
-pos8dir <- dir8_m[cbind(pos8row, pos8col)]
-pos8row_0 <- pos8row[which(pos8dir == 8)]; pos8col_0 <- poscol[which(pos8dir == 8)]
-W_FL_m[cbind(pos8row_0, pos8col_0)] <- 0
+# Initial search around the outlet across all 8 directions
+r1 <- posrow;     c1 <- poscol - 1; idx1 <- which(dir8_m[cbind(r1, c1)] == 1); pos1row_0 <- r1[idx1]; pos1col_0 <- c1[idx1]; W_FL_m[cbind(pos1row_0, pos1col_0)] <- 0
+r2 <- posrow + 1; c2 <- poscol - 1; idx2 <- which(dir8_m[cbind(r2, c2)] == 2); pos2row_0 <- r2[idx2]; pos2col_0 <- c2[idx2]; W_FL_m[cbind(pos2row_0, pos2col_0)] <- 0
+r3 <- posrow + 1; c3 <- poscol;     idx3 <- which(dir8_m[cbind(r3, c3)] == 3); pos3row_0 <- r3[idx3]; pos3col_0 <- c3[idx3]; W_FL_m[cbind(pos3row_0, pos3col_0)] <- 0
+r4 <- posrow + 1; c4 <- poscol + 1; idx4 <- which(dir8_m[cbind(r4, c4)] == 4); pos4row_0 <- r4[idx4]; pos4col_0 <- c4[idx4]; W_FL_m[cbind(pos4row_0, pos4col_0)] <- 0
+r5 <- posrow;     c5 <- poscol + 1; idx5 <- which(dir8_m[cbind(r5, c5)] == 5); pos5row_0 <- r5[idx5]; pos5col_0 <- c5[idx5]; W_FL_m[cbind(pos5row_0, pos5col_0)] <- 0
+r6 <- posrow - 1; c6 <- poscol + 1; idx6 <- which(dir8_m[cbind(r6, c6)] == 6); pos6row_0 <- r6[idx6]; pos6col_0 <- c6[idx6]; W_FL_m[cbind(pos6row_0, pos6col_0)] <- 0
+r7 <- posrow - 1; c7 <- poscol;     idx7 <- which(dir8_m[cbind(r7, c7)] == 7); pos7row_0 <- r7[idx7]; pos7col_0 <- c7[idx7]; W_FL_m[cbind(pos7row_0, pos7col_0)] <- 0
+r8 <- posrow - 1; c8 <- poscol - 1; idx8 <- which(dir8_m[cbind(r8, c8)] == 8); pos8row_0 <- r8[idx8]; pos8col_0 <- c8[idx8]; W_FL_m[cbind(pos8row_0, pos8col_0)] <- 0
 
 count <- 1
 while ((length(pos1col_0) | length(pos2col_0) | length(pos3col_0) | length(pos4col_0) | 
@@ -294,43 +250,15 @@ while ((length(pos1col_0) | length(pos2col_0) | length(pos3col_0) | length(pos4c
   pos0row_bis <- c(pos1row_0, pos2row_0, pos3row_0, pos4row_0, pos5row_0, pos6row_0, pos7row_0, pos8row_0)
   pos0col_bis <- c(pos1col_0, pos2col_0, pos3col_0, pos4col_0, pos5col_0, pos6col_0, pos7col_0, pos8col_0)
   
-  poscolt <- pos0col_bis - 1; posrowt <- pos0row_bis
-  posrow <- posrowt[poscolt != 0]; poscol <- poscolt[poscolt != 0]
-  posdir <- dir8_m[cbind(posrow, poscol)]
-  pos1row_0 <- posrow[which(posdir == 1)]; pos1col_0 <- poscol[which(posdir == 1)]
-  
-  poscolt <- pos0col_bis - 1; posrowt <- pos0row_bis + 1
-  posrow <- posrowt[poscolt != 0]; poscol <- poscolt[poscolt != 0]
-  posdir <- dir8_m[cbind(posrow, poscol)]
-  pos2row_0 <- posrow[which(posdir == 2)]; pos2col_0 <- poscol[which(posdir == 2)]
-  
-  poscol <- pos0col_bis; posrow <- pos0row_bis + 1
-  posdir <- dir8_m[cbind(posrow, poscol)]
-  pos3row_0 <- posrow[which(posdir == 3)]; pos3col_0 <- poscol[which(posdir == 3)]
-  
-  poscol <- pos0col_bis + 1; posrow <- pos0row_bis + 1
-  posdir <- dir8_m[cbind(posrow, poscol)]
-  pos4row_0 <- posrow[which(posdir == 4)]; pos4col_0 <- poscol[which(posdir == 4)]
-  
-  poscol <- pos0col_bis + 1; posrow <- pos0row_bis
-  posdir <- dir8_m[cbind(posrow, poscol)]
-  pos5row_0 <- posrow[which(posdir == 5)]; pos5col_0 <- poscol[which(posdir == 5)]
-  
-  poscolt <- pos0col_bis + 1; posrowt <- pos0row_bis - 1
-  posrow <- posrowt[posrowt != 0]; poscol <- poscolt[posrowt != 0]
-  posdir <- dir8_m[cbind(posrow, poscol)]
-  pos6row_0 <- posrow[which(posdir == 6)]; pos6col_0 <- poscol[which(posdir == 6)]
-  
-  poscolt <- pos0col_bis; posrowt <- pos0row_bis - 1
-  posrow <- posrowt[posrowt != 0]; poscol <- poscolt[posrowt != 0]
-  posdir <- dir8_m[cbind(posrow, poscol)]
-  pos7row_0 <- posrow[which(posdir == 7)]; pos7col_0 <- poscol[which(posdir == 7)]
-  
-  poscolt <- pos0col_bis - 1; posrowt <- pos0row_bis - 1
-  posrowt1 <- posrowt[posrowt != 0]; poscolt1 <- poscolt[posrowt != 0]
-  posrow <- posrowt1[poscolt1 != 0]; poscol <- poscolt1[poscolt1 != 0]
-  posdir <- dir8_m[cbind(posrow, poscol)]
-  pos8row_0 <- posrow[which(posdir == 8)]; pos8col_0 <- poscol[which(posdir == 8)]
+  # Search all 8 directions with correct respective offsets (fixes Direction 3, 4, 5, 7 bug)
+  r1 <- pos0row_bis;     c1 <- pos0col_bis - 1; idx1 <- which(dir8_m[cbind(r1, c1)] == 1); pos1row_0 <- r1[idx1]; pos1col_0 <- c1[idx1]
+  r2 <- pos0row_bis + 1; c2 <- pos0col_bis - 1; idx2 <- which(dir8_m[cbind(r2, c2)] == 2); pos2row_0 <- r2[idx2]; pos2col_0 <- c2[idx2]
+  r3 <- pos0row_bis + 1; c3 <- pos0col_bis;     idx3 <- which(dir8_m[cbind(r3, c3)] == 3); pos3row_0 <- r3[idx3]; pos3col_0 <- c3[idx3]
+  r4 <- pos0row_bis + 1; c4 <- pos0col_bis + 1; idx4 <- which(dir8_m[cbind(r4, c4)] == 4); pos4row_0 <- r4[idx4]; pos4col_0 <- c4[idx4]
+  r5 <- pos0row_bis;     c5 <- pos0col_bis + 1; idx5 <- which(dir8_m[cbind(r5, c5)] == 5); pos5row_0 <- r5[idx5]; pos5col_0 <- c5[idx5]
+  r6 <- pos0row_bis - 1; c6 <- pos0col_bis + 1; idx6 <- which(dir8_m[cbind(r6, c6)] == 6); pos6row_0 <- r6[idx6]; pos6col_0 <- c6[idx6]
+  r7 <- pos0row_bis - 1; c7 <- pos0col_bis;     idx7 <- which(dir8_m[cbind(r7, c7)] == 7); pos7row_0 <- r7[idx7]; pos7col_0 <- c7[idx7]
+  r8 <- pos0row_bis - 1; c8 <- pos0col_bis - 1; idx8 <- which(dir8_m[cbind(r8, c8)] == 8); pos8row_0 <- r8[idx8]; pos8col_0 <- c8[idx8]
   
   count <- count + 1
 }
@@ -354,9 +282,9 @@ mask_cells <- dif_WFL * 0 + 1
 
 Ddn <- ((W_FL_fin == 0) * inv_CS) + W_FL_fin
 crs(Ddn) <- crs_out
-writeRaster(Ddn, "Ddn.tif", overwrite = TRUE)
+writeRaster(Ddn, paste0("Ddn_100m_5x5_", gauge_id, ".tif"), overwrite = TRUE)
 
-# Clean memory
+# Cleanup Ddn memory
 rm(Wgt_m, W_FL_m, dir8_m, dif_WFL, inv_CS, flow_dir_D8); gc()
 
 # --------------------------------------------------------------------------
@@ -384,7 +312,7 @@ cmean        <- (accW + W_factor) / Acc_fin
 
 Dup <- cmean * smean * (Acc_fin * constant_res^2)^(1/2)
 crs(Dup) <- crs_out
-writeRaster(Dup, "Dup.tif", overwrite = TRUE)
+writeRaster(Dup, paste0("Dup_100m_5x5_", gauge_id, ".tif"), overwrite = TRUE)
 
 rm(constant_res, ang, Acc_fin, smean, accW, cmean); gc()
 
@@ -399,12 +327,12 @@ crs(IC) <- crs_out
 
 pal <- colorRampPalette(c("blue", "lightyellow1", "red"))
 
-png("IC.png", width = 800, height = 800)
+png(paste0("IC_100m_5x5_", gauge_id, ".png"), width = 800, height = 800)
 plot(IC, col = pal(100), main = paste("Index of Connectivity (IC) - Gauge", gauge_id))
 dev.off()
 
 plot(IC, col = pal(100), main = paste("Index of Connectivity (IC) - Gauge", gauge_id))
-writeRaster(IC, paste0("IC_", res, "m.tif"), overwrite = TRUE)
+writeRaster(IC, paste0("IC_", res, "m_5x5_", gauge_id, ".tif"), overwrite = TRUE)
 
 # Cleanup intermediate files if flag_k == 0
 if (flag_k == 0) {
