@@ -26,7 +26,7 @@ if (!dir.exists(wd)) dir.create(wd, recursive = TRUE)
 setwd(wd)
 
 dem_dir      <- "F:/Peninsular India/Connectivity/IC/Input/DEM"
-w_factor_dir <- "F:/Peninsular India/Connectivity/IC/Input/NDVI/2021"
+w_factor_dir <- "F:/Peninsular India/Connectivity/IC/Input/NDVI/1990"
 target_path  <- "F:/Peninsular India/CAMELS_IND/CAMELS_IND_Catchments_Streamflow_Sufficient3/shapefiles_catchment/gauge_stations.shp"
 gauge_id_col <- "gauge_id"
 
