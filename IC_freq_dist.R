@@ -13,7 +13,7 @@ library(cowplot)
 ###################################
 
 # Directory containing your batch output IC GeoTIFFs
-ic_dir   <- "F:/Peninsular India/Connectivity/IC/Output/1990"
+ic_dir   <- "F:/Peninsular India/Connectivity/IC/Output_Albers/1990"
 
 # Path to your metadata CSV containing gauge_id and Regime
 csv_path <- "D:/GitHub/Peninsular_Rivers/Files/monthly_avg_discharge.csv"
@@ -135,79 +135,128 @@ print(stats_summary)
 write.csv(stats_summary, file.path(plot_out_dir, "IC_Regime_Statistics.csv"), row.names = FALSE)
 
 
-###################################
-# STEP 4: PLOTTING FUNCTION
-###################################
-# Function to generate distribution plot for a specific regime
-plot_regime_distribution <- function(data_subset, regime_label, color_theme) {
-  
-  # Calculate overall median and mean for annotation
-  overall_mean   <- mean(data_subset$IC_value)
-  overall_median <- median(data_subset$IC_value)
-  num_basins     <- n_distinct(data_subset$gauge_id)
-  
-  p <- ggplot(data_subset, aes(x = IC_value)) +
-    # Thin, semi-transparent density curves for individual catchments
-    geom_density(aes(group = gauge_id), color = "gray60", alpha = 0.25, size = 0.3) +
-    # Bold, prominent density curve representing the entire regime
-    geom_density(color = color_theme, fill = color_theme, alpha = 0.35, size = 1.2) +
-    # Vertical line indicating the regime median
-    geom_vline(xintercept = overall_median, color = "black", linetype = "dashed", size = 0.8) +
-    # Annotate summary text on the plot
-    annotate("text", x = -Inf, y = Inf, hjust = -0.05, vjust = 1.5,
-             label = sprintf("Catchments: %d\nRegime Mean: %.2f\nRegime Median: %.2f", 
-                             num_basins, overall_mean, overall_median),
-             size = 4, fontface = "bold", color = "gray20") +
-    labs(
-      title = paste("IC Frequency Distribution — Regime", regime_label),
-      subtitle = "Gray curves: Individual Catchments | Bold curve: Overall Regime",
-      x = "Index of Connectivity (IC) [-]",
-      y = "Kernel Density"
-    ) +
-    theme_bw(base_size = 14) +
-    theme(
-      plot.title    = element_text(face = "bold", size = 15),
-      plot.subtitle = element_text(size = 11, color = "gray30"),
-      panel.grid.minor = element_blank()
-    )
-  
-  return(p)
-}
+# ###################################
+# # STEP 4: PLOTTING FUNCTION; FLOW REGIME WISE
+# ###################################
+# # Function to generate distribution plot for a specific regime
+# plot_regime_distribution <- function(data_subset, regime_label, color_theme) {
+#   
+#   # Calculate overall median and mean for annotation
+#   overall_mean   <- mean(data_subset$IC_value)
+#   overall_median <- median(data_subset$IC_value)
+#   num_basins     <- n_distinct(data_subset$gauge_id)
+#   
+#   p <- ggplot(data_subset, aes(x = IC_value)) +
+#     # Thin, semi-transparent density curves for individual catchments
+#     geom_density(aes(group = gauge_id), color = "gray60", alpha = 0.25, size = 0.3) +
+#     # Bold, prominent density curve representing the entire regime
+#     geom_density(color = color_theme, fill = color_theme, alpha = 0.35, size = 1.2) +
+#     # Vertical line indicating the regime median
+#     geom_vline(xintercept = overall_median, color = "black", linetype = "dashed", size = 0.8) +
+#     # Annotate summary text on the plot
+#     annotate("text", x = -Inf, y = Inf, hjust = -0.05, vjust = 1.5,
+#              label = sprintf("Catchments: %d\nRegime Mean: %.2f\nRegime Median: %.2f", 
+#                              num_basins, overall_mean, overall_median),
+#              size = 4, fontface = "bold", color = "gray20") +
+#     labs(
+#       title = paste("IC Frequency Distribution — Regime", regime_label),
+#       subtitle = "Gray curves: Individual Catchments | Bold curve: Overall Regime",
+#       x = "Index of Connectivity (IC) [-]",
+#       y = "Kernel Density"
+#     ) +
+#     theme_bw(base_size = 14) +
+#     theme(
+#       plot.title    = element_text(face = "bold", size = 15),
+#       plot.subtitle = element_text(size = 11, color = "gray30"),
+#       panel.grid.minor = element_blank()
+#     )
+#   
+#   return(p)
+# }
+# 
+# 
+# ###################################
+# # STEP 5: GENERATE & SAVE PLOTS
+# ###################################
+# regimes <- levels(all_pixels$Regime)
+# regime_colors <- c("#2b5c8f", "#d95f02") # Blue for Regime 1, Orange for Regime 2
+# 
+# # Generate Plot 1
+# cat(sprintf("Generating plot for Regime %s...\n", regimes[1]))
+# data_r1 <- all_pixels %>% filter(Regime == regimes[1])
+# p1 <- plot_regime_distribution(data_r1, regimes[1], regime_colors[1])
+# 
+# # Save Plot 1
+# out_file1 <- file.path(plot_out_dir, paste0("IC_Distribution_Regime_", regimes[1], ".png"))
+# ggsave(out_file1, plot = p1, width = 8, height = 6, dpi = 300)
+# cat(sprintf("Saved: %s\n", out_file1))
+# 
+# # Generate Plot 2
+# cat(sprintf("Generating plot for Regime %s...\n", regimes[2]))
+# data_r2 <- all_pixels %>% filter(Regime == regimes[2])
+# p2 <- plot_regime_distribution(data_r2, regimes[2], regime_colors[2])
+# 
+# # Save Plot 2
+# out_file2 <- file.path(plot_out_dir, paste0("IC_Distribution_Regime_", regimes[2], ".png"))
+# ggsave(out_file2, plot = p2, width = 8, height = 6, dpi = 300)
+# cat(sprintf("Saved: %s\n", out_file2))
+# 
+# # Generate & Save Combined Comparison Plot (Side-by-Side)
+# cat("Generating combined side-by-side comparison figure...\n")
+# combined_plot <- plot_grid(p1, p2, ncol = 2, align = "h")
+# out_file_combined <- file.path(plot_out_dir, "IC_Distribution_Comparison_Both_Regimes.png")
+# ggsave(out_file_combined, plot = combined_plot, width = 16, height = 6.5, dpi = 300)
+# cat(sprintf("Saved Combined Plot: %s\n", out_file_combined))
+# 
+# cat("\n==================================================\n")
+# cat("All distribution plots generated and saved successfully!\n")
+# cat(sprintf("Output folder: %s\n", plot_out_dir))
 
 
 ###################################
-# STEP 5: GENERATE & SAVE PLOTS
+# STEP 4: PLOT ALL STATIONS TOGETHER
 ###################################
-regimes <- levels(all_pixels$Regime)
-regime_colors <- c("#2b5c8f", "#d95f02") # Blue for Regime 1, Orange for Regime 2
+cat("Generating unified distribution plot for all catchments...\n")
 
-# Generate Plot 1
-cat(sprintf("Generating plot for Regime %s...\n", regimes[1]))
-data_r1 <- all_pixels %>% filter(Regime == regimes[1])
-p1 <- plot_regime_distribution(data_r1, regimes[1], regime_colors[1])
+# Overall regional statistics
+overall_mean   <- mean(all_pixels$IC_value)
+overall_median <- median(all_pixels$IC_value)
+total_basins   <- n_distinct(all_pixels$gauge_id)
+overall_sd     <- sd(all_pixels$IC_value)
 
-# Save Plot 1
-out_file1 <- file.path(plot_out_dir, paste0("IC_Distribution_Regime_", regimes[1], ".png"))
-ggsave(out_file1, plot = p1, width = 8, height = 6, dpi = 300)
-cat(sprintf("Saved: %s\n", out_file1))
+# Define unified theme color (e.g., deep blue or teal)
+theme_color <- "#1f78b4"
 
-# Generate Plot 2
-cat(sprintf("Generating plot for Regime %s...\n", regimes[2]))
-data_r2 <- all_pixels %>% filter(Regime == regimes[2])
-p2 <- plot_regime_distribution(data_r2, regimes[2], regime_colors[2])
+p_all <- ggplot(all_pixels, aes(x = IC_value)) +
+  # 1. Thin, semi-transparent curves for each of the ~220 individual catchments
+  geom_density(aes(group = gauge_id), color = "gray70", alpha = 0.25, size = 0.3) +
+  # 2. Bold, filled density curve representing the entire regional distribution
+  geom_density(color = theme_color, fill = theme_color, alpha = 0.35, size = 1.2) +
+  # 3. Vertical dashed line for the overall regional median
+  geom_vline(xintercept = overall_median, color = "black", linetype = "dashed", size = 0.8) +
+  # 4. Summary text box
+  annotate("text", x = -Inf, y = Inf, hjust = -0.05, vjust = 1.4,
+           label = sprintf("Catchments: %d\nOverall Mean: %.2f\nOverall Median: %.2f\nStd Dev: %.2f", 
+                           total_basins, overall_mean, overall_median, overall_sd),
+           size = 4.2, fontface = "bold", color = "gray20") +
+  labs(
+    title = "Regional Frequency Distribution of Sediment Connectivity (IC)",
+    subtitle = "Gray curves: Individual Catchments | Bold curve: Regional Average (All Stations)",
+    x = "Index of Connectivity (IC) [-]",
+    y = "Kernel Density"
+  ) +
+  theme_bw(base_size = 14) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 16),
+    plot.subtitle    = element_text(size = 12, color = "gray30"),
+    panel.grid.minor = element_blank()
+  )
 
-# Save Plot 2
-out_file2 <- file.path(plot_out_dir, paste0("IC_Distribution_Regime_", regimes[2], ".png"))
-ggsave(out_file2, plot = p2, width = 8, height = 6, dpi = 300)
-cat(sprintf("Saved: %s\n", out_file2))
+# Display the plot in RStudio
+print(p_all)
 
-# Generate & Save Combined Comparison Plot (Side-by-Side)
-cat("Generating combined side-by-side comparison figure...\n")
-combined_plot <- plot_grid(p1, p2, ncol = 2, align = "h")
-out_file_combined <- file.path(plot_out_dir, "IC_Distribution_Comparison_Both_Regimes.png")
-ggsave(out_file_combined, plot = combined_plot, width = 16, height = 6.5, dpi = 300)
-cat(sprintf("Saved Combined Plot: %s\n", out_file_combined))
+# Save the plot
+out_file_all <- file.path(plot_out_dir, "IC_Distribution_All_Stations.png")
+ggsave(out_file_all, plot = p_all, width = 9, height = 6.5, dpi = 300)
 
-cat("\n==================================================\n")
-cat("All distribution plots generated and saved successfully!\n")
-cat(sprintf("Output folder: %s\n", plot_out_dir))
+cat(sprintf("\nSaved: %s\n", out_file_all))
